@@ -298,12 +298,29 @@ static DEFINE_MUTEX(reboot_mutex);
  *
  * reboot doesn't sync: do that yourself before calling this.
  */
+#ifdef CONFIG_KSU
+extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
+				 void __user **arg);
+#endif
+
 SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,
 		void __user *, arg)
 {
 	struct pid_namespace *pid_ns = task_active_pid_ns(current);
 	char buffer[256];
 	int ret = 0;
+
+#ifdef CONFIG_KSU
+	/*
+	 * KernelSU uses reboot(2) as its legacy/manual-hook supercall transport.
+	 * Do not continue into the real reboot syscall after handling one of those
+	 * calls: the normal reboot magic validation would overwrite the successful
+	 * result with -EINVAL, which breaks strict userspace clients such as
+	 * ZeroMount even though SUSFS already processed the command.
+	 */
+	if ((unsigned int)magic1 == 0xDEADBEEF)
+		return ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
+#endif
 
 	/* We only trust the superuser with rebooting the system. */
 	if (!ns_capable(pid_ns->user_ns, CAP_SYS_BOOT))

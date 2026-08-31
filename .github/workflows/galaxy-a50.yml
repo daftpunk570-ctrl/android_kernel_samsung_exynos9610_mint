@@ -1,130 +1,126 @@
-name: Stable Release Build (Galaxy A50)
+name: Build and release A50 Android 11
 
 on:
   workflow_dispatch:
   push:
-    branches:
-      - "android-*"
+    branches: [main]
+    tags: ['a50-*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: a50-release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
 
 jobs:
   build:
+    name: Android 11 / ${{ matrix.variant }} / enforcing
     runs-on: ubuntu-22.04
-
+    timeout-minutes: 180
     strategy:
-      fail-fast: true
+      fail-fast: false
       matrix:
-        type: [oneui-12-e, oneui-11-e, aosp-12-e, aosp-11-e]
-
+        variant: [aosp, oneui]
     steps:
-      - uses: actions/checkout@v3
-
-      - uses: szenius/set-timezone@v1.0
+      - name: Checkout exact source and KernelSU revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          timezoneLinux: "Asia/Manila"
-          timezoneMacos: "Asia/Manila"
-          timezoneWindows: "Philippine Standard Time"
+          submodules: recursive
+          persist-credentials: false
 
-      - name: Export build branch
-        run: echo "branch=${GITHUB_REF#refs/heads/}" >> $GITHUB_ENV
-        id: branch_name
-
-      - name: Update Debian/Ubuntu Repositories
-        run: sudo apt-get update
-
-      - name: Install Debian/Ubuntu dependencies
-        run: sudo apt-get install bzip2 lib32stdc++6 libc6-dev-i386 libncurses5 jq -y
-
-      - name: Parse build arguments
+      - name: Install build dependencies
         run: |
-          echo "VARIANT=$(echo ${{ matrix.type }} | cut -d '-' -f1)" >> $GITHUB_ENV
-          echo "ANDROID=$(echo ${{ matrix.type }} | cut -d '-' -f2)" >> $GITHUB_ENV
-          echo "SELINUX=$(echo ${{ matrix.type }} | cut -d '-' -f3)" >> $GITHUB_ENV
+          sudo apt-get update
+          sudo apt-get install -y build-essential bc bison flex libssl-dev \
+            libelf-dev libncurses5 libncurses-dev lib32stdc++6 libc6-dev-i386 \
+            cpio zip unzip lz4 lzop rsync python3
 
-      - name: Build Mint kernel (No-Root)
+      - name: Verify integration patches and pinned dependencies
+        run: bash scripts/verify-ksunext.sh
+
+      - name: Build TWRP package
+        env:
+          VARIANT: ${{ matrix.variant }}
         run: |
-          set -eo pipefail
-          echo "  I: Building Mint kernel ${GITHUB_REF##*/}-${GITHUB_RUN_NUMBER}"
-          ./build.sh --automated --device a50 --variant $VARIANT --android $ANDROID -$SELINUX
+          mkdir -p ci-logs
+          bash build.sh --automated --device a50 --android 11 --variant "$VARIANT" --kernelsu 2>&1 | tee ci-logs/build.log
 
-      - name: Upload kernel image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.type }} Kernel Image (No-Root)
-          path: "out/boot.img"
-          if-no-files-found: error
-
-      - name: Build Mint kernel (KernelSU)
+      - name: Validate ZIP and collect public build metadata
+        env:
+          VARIANT: ${{ matrix.variant }}
         run: |
-          set -eo pipefail
-          echo "  I: Building Mint kernel ${GITHUB_REF##*/}-${GITHUB_RUN_NUMBER}"
-          ./build.sh --automated --device a50 --variant $VARIANT --android $ANDROID -$SELINUX --kernelsu
+          python3 scripts/validate-a50-package.py "$VARIANT"
+          mkdir -p release
+          cp out/*.zip release/
+          cp .config "release/kernel-config-${VARIANT}-android11.txt"
+          {
+            printf 'source=%s\nvariant=%s\nandroid=11\nselinux=enforcing\n' "$GITHUB_SHA" "$VARIANT"
+            printf 'kernelsu=%s\n' "$(git -C KernelSU rev-parse HEAD)"
+            printf 'toolchain=%s\n' "$(git -C toolchain rev-parse HEAD)"
+            printf 'susfs=v2.2.0\n'
+            sha256sum kernel/patches/*.patch
+          } > "release/build-info-${VARIANT}.txt"
 
-      - name: Upload kernel image artifact
-        uses: actions/upload-artifact@v4
+      - name: Upload release files
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ${{ matrix.type }} Kernel Image (KernelSU)
-          path: "out/boot.img"
+          name: a50-android11-${{ matrix.variant }}
+          path: release/*
           if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
 
-      - name: Prepare release package
-        run: |
-          mkdir -p ./release
-          mv -f `find ./out -iname "Mint-*.zip"` ./release/
-
-      - name: Prepare build config artifact
-        run: cp .config ./release/kernel_config_a50_$VARIANT-$ANDROID-$SELINUX.txt
-
-      - name: Upload release package
-        uses: actions/upload-artifact@v4
+      - name: Preserve build diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: ${{ matrix.type }} Release
-          path: "release"
-          if-no-files-found: error
-
-      - name: Upload build config artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.type }} Kernel Configs
-          path: release/kernel_config_a50_${{ env.VARIANT }}-${{ env.ANDROID }}-${{ env.SELINUX }}.txt
-          if-no-files-found: error
+          name: build-log-${{ matrix.variant }}
+          path: ci-logs/build.log
+          if-no-files-found: ignore
+          retention-days: 7
 
   release:
-    name: Release files and configs
-    if: ${{ !contains(github.event.head_commit.message, '[skip rel]') }}
+    name: Publish both variants
     needs: build
-    runs-on: ubuntu-latest
-    env:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-    strategy:
-      fail-fast: true
-
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v3
-
-      - uses: szenius/set-timezone@v1.0
+      - name: Checkout release notes
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          timezoneLinux: "Asia/Manila"
-          timezoneMacos: "Asia/Manila"
-          timezoneWindows: "Philippine Standard Time"
+          persist-credentials: false
 
-      - name: Merge releases
-        run: |
-          set -eo pipefail
-          gh run download "$GITHUB_RUN_ID" -p "*Release" --dir ./release
-          find ./release -mindepth 2 -type f -exec mv {} ./release \;
-
-      - name: Delete build configs and release directories
-        run: |
-          set -eo pipefail
-          rm -f ./release/kernel_config_*.txt
-          rm -rf ./release/aosp-* ./release/oneui-*
-
-      - name: Upload release
-        uses: Hs1r1us/Release-AIO@v1.0
+      - name: Download both validated packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          tag_name: mainline-${{ github.run_number }}_a50dx
-          prerelease: true
-          release_name: Mint Stable
-          body_path: "./tools/make/release/a50-release.md"
-          asset_files: "./release"
+          pattern: a50-android11-*
+          merge-multiple: true
+          path: release
+
+      - name: Publish immutable run release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          shopt -s nullglob
+          zips=(release/*.zip)
+          test "${#zips[@]}" -eq 2
+          cp Documentation/a50-release.md release-notes.md
+          printf '\nSource commit: `%s`\nWorkflow run: %s/%s/actions/runs/%s\n' \
+            "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> release-notes.md
+          (cd release && sha256sum ./*.zip ./*.txt > SHA256SUMS)
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="a50-a11-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          fi
+          gh release create "$tag" release/* --target "$GITHUB_SHA" \
+            --title "Mint A50 Android 11 - KSU Next + SUSFS 2.2.0 ($tag)" \
+            --notes-file release-notes.md

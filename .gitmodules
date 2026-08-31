@@ -1,4 +1,5 @@
 [submodule "KernelSU"]
 	path = KernelSU
-	url = https://github.com/rsuntk/KernelSU.git
+	url = https://github.com/sidex15/KernelSU-Next.git
+	branch = legacy-susfs-v2
 	ignore = dirty

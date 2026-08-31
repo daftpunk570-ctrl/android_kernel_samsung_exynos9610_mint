@@ -2,6 +2,20 @@
 
 # Mint Kernel
 
+## Galaxy A50: KernelSU Next + SUSFS / Android 11
+
+This fork builds **AOSP Android 11** and **One UI 3.x / Android 11** flashable ZIPs
+with KernelSU Next community legacy, SUSFS 2.2.0 and SELinux enforcing.
+Download the ZIP matching your ROM from this repository's **Releases** page.
+
+Pushes to `main`, tags named `a50-*`, or **Actions > Build and release A50 Android
+11 > Run workflow** build both variants and publish a Release only after both
+packages validate successfully. No personal access token secret is needed.
+
+See [integration and build documentation](Documentation/kernelsu-next.md) and
+[installation/release notes](Documentation/a50-release.md). The Manager APK and
+userspace modules are not included. Back up your boot partition before flashing.
+
 _Freshen up your Galaxy. An optimized, One UI-first kernel for Samsung Galaxy devices on the Exynos 9610 platform._
 
 #### Common Mint kernel source for the Exynos 9610 Platform

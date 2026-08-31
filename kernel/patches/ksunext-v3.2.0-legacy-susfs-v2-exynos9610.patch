@@ -1,0 +1,97 @@
+diff --git a/kernel/policy/allowlist.c b/kernel/policy/allowlist.c
+index f1cd8b50..6d6a6d1b 100644
+--- a/kernel/policy/allowlist.c
++++ b/kernel/policy/allowlist.c
+@@ -502,7 +502,7 @@ static void migrate_profile(u32 version, struct app_profile *profile)
+         if (profile->allow_su) {
+             domain = profile->rp_config.profile.selinux_domain;
+             if (strncmp(domain, "u:r:su:s0", domain_len) == 0) {
+-                strscpy_pad(domain, KSU_DEFAULT_SELINUX_DOMAIN, domain_len);
++                __strscpy_pad(domain, KSU_DEFAULT_SELINUX_DOMAIN, domain_len);
+                pr_info("migrated domain of profile: %s\n", profile->key);
+            }
+        }
+diff --git a/kernel/supercall/dispatch.c b/kernel/supercall/dispatch.c
+index 6fe1357e..106d8be4 100644
+--- a/kernel/supercall/dispatch.c
++++ b/kernel/supercall/dispatch.c
+@@ -356,9 +356,26 @@ static int do_get_app_profile(void __user *arg)
+     return -EOPNOTSUPP;
+ #endif
+     uid_t uid;
++    __u32 userspace_version;
++    size_t userspace_size;
+     struct app_profile *profile;
+     int ret = 0;
+ 
++    if (copy_from_user(&userspace_version,
++                       (char __user *)arg + offsetof(struct ksu_get_app_profile_cmd, profile.version),
++                       sizeof(userspace_version))) {
++        pr_err("get_app_profile: copy profile version from user failed\n");
++        return -EFAULT;
++    }
++
++    /*
++     * KernelSU Next 3.2 managers use app profile v3. Profile v4 only appends
++     * root_profile.flags, so copying the pre-v4 prefix is ABI compatible.
++     */
++    userspace_size = userspace_version == 3
++                         ? offsetof(struct app_profile, rp_config.profile.flags)
++                         : sizeof(struct app_profile);
++
+     if (copy_from_user(&uid, (char __user *)arg + offsetof(struct ksu_get_app_profile_cmd, profile.curr_uid),
+                        sizeof(uid_t))) {
+         pr_err("get_app_profile: copy_from_user failed\n");
+@@ -371,8 +388,16 @@ static int do_get_app_profile(void __user *arg)
+     if (!profile) {
+         ret = -ENOENT;
+     } else {
+-        if (copy_to_user((char __user *)arg + offsetof(struct ksu_get_app_profile_cmd, profile), profile,
+-                         sizeof(struct app_profile))) {
++        if (userspace_version == 3 &&
++            copy_to_user((char __user *)arg + offsetof(struct ksu_get_app_profile_cmd, profile.version),
++                         &userspace_version, sizeof(userspace_version))) {
++            pr_err("get_app_profile: copy v3 profile version to user failed\n");
++            ret = -EFAULT;
++        } else if (copy_to_user((char __user *)arg +
++                                    offsetof(struct ksu_get_app_profile_cmd, profile) +
++                                    sizeof(userspace_version),
++                                (char *)profile + sizeof(userspace_version),
++                                userspace_size - sizeof(userspace_version))) {
+             pr_err("get_app_profile: copy_to_user failed\n");
+             ret = -EFAULT;
+         }
+@@ -387,14 +412,31 @@ static int do_set_app_profile(void __user *arg)
+     return -EOPNOTSUPP;
+ #endif
+ 
+-    struct ksu_set_app_profile_cmd cmd;
++    struct ksu_set_app_profile_cmd cmd = {};
++    __u32 userspace_version;
++    size_t userspace_size;
+     int ret;
+ 
+-	if (copy_from_user(&cmd, arg, sizeof(cmd))) {
++	if (copy_from_user(&userspace_version, arg, sizeof(userspace_version))) {
++		pr_err("set_app_profile: copy profile version from user failed\n");
++		return -EFAULT;
++	}
++
++    userspace_size = userspace_version == 3
++                         ? offsetof(struct app_profile, rp_config.profile.flags)
++                         : sizeof(struct app_profile);
++
++	if (copy_from_user(&cmd.profile, arg, userspace_size)) {
+ 		pr_err("set_app_profile: copy_from_user failed\n");
+ 		return -EFAULT;
+ 	}
+ 
++    if (userspace_version == 3) {
++        cmd.profile.version = KSU_APP_PROFILE_VER;
++        if (cmd.profile.allow_su)
++            cmd.profile.rp_config.profile.flags = FLAG_KSU_NO_NEW_PRIVS;
++    }
++
+     ret = ksu_set_app_profile(&cmd.profile);
+     if (!ret) {
+         ksu_persistent_allow_list();
