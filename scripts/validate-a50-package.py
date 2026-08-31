@@ -43,7 +43,7 @@ with zipfile.ZipFile(packages[0]) as package:
     # The shared archive also carries exynos9611's fstab. Only the A50's
     # exynos9610 fstab determines whether this variant mounts /product.
     fstab = subprocess.run(
-        ["cpio", "--quiet", "-i", "--to-stdout", "./fstab.exynos9610"],
+        ["cpio", "--quiet", "-i", "--to-stdout", "fstab.exynos9610", "./fstab.exynos9610"],
         input=ramdisk, capture_output=True, check=True,
     ).stdout
     require(b"/system" in fstab and b"/vendor" in fstab, "Missing A50 fstab")
