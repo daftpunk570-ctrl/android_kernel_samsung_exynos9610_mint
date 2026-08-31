@@ -60,6 +60,9 @@ by the build script; an existing toolchain at a different commit is rejected.
 The scripts stop on pipeline failures. Build each variant in a clean checkout
 when validating release contents.
 
+Do not use a shallow KernelSU submodule: the legacy Kbuild calculates version
+code `33215` from its complete commit history. CI verifies this before building.
+
 GitHub Actions builds both variants on Ubuntu 22.04 and publishes ZIPs, configs,
 dependency/patch provenance and SHA-256 checksums after both jobs succeed.
 Trigger through a push to `main`, an `a50-*` tag, or `workflow_dispatch`.

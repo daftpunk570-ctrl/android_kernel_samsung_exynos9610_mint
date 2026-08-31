@@ -6,6 +6,10 @@ bash -n build.sh
 expected_commit="$(sed -n 's/^KSU_NEXT_COMMIT="\([^"]*\)"/\1/p' build.sh)"
 test -n "$expected_commit"
 test "$(git -C KernelSU rev-parse HEAD)" = "$expected_commit"
+test "$(git -C KernelSU rev-parse --is-shallow-repository)" = false
+# This branch derives its userspace API version from commit history. A shallow
+# submodule silently reports 30201 instead of the tested kernel version 33215.
+test "$((30200 + $(git -C KernelSU rev-list --count HEAD)))" -eq 33215
 test "$(git config -f .gitmodules --get submodule.KernelSU.branch)" = legacy-susfs-v2
 port=kernel/patches/susfs-v2.2.0-exynos9610.patch
 compat=kernel/patches/ksunext-v3.2.0-legacy-susfs-v2-exynos9610.patch
