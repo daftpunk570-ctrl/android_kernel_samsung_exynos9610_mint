@@ -40,7 +40,14 @@ with zipfile.ZipFile(packages[0]) as package:
     source = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     require(manifest.get("ro.mint.build.source.commit") == source, "Source revision mismatch")
     ramdisk = package.read("ramdisk-new.cpio")
-    require((b"/product" in ramdisk) == (variant == "oneui"), "Wrong variant ramdisk")
+    # The shared archive also carries exynos9611's fstab. Only the A50's
+    # exynos9610 fstab determines whether this variant mounts /product.
+    fstab = subprocess.run(
+        ["cpio", "--quiet", "-i", "--to-stdout", "./fstab.exynos9610"],
+        input=ramdisk, capture_output=True, check=True,
+    ).stdout
+    require(b"/system" in fstab and b"/vendor" in fstab, "Missing A50 fstab")
+    require((b"/product" in fstab) == (variant == "oneui"), "Wrong variant ramdisk")
 boot = pathlib.Path("out/boot.img").read_bytes()
 require(boot[:8] == b"ANDROID!", "Invalid Android boot image")
 require(b"androidboot.selinux=enforcing" in boot[:1632], "SELinux must boot enforcing")
