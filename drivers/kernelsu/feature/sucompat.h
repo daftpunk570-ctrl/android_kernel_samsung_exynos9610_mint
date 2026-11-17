@@ -14,14 +14,14 @@ void ksu_sucompat_init(void);
 void ksu_sucompat_exit(void);
 
 // Handler functions exported for hook_manager
-#ifdef CONFIG_KSU_SUSFS
+#ifdef CONFIG_KSU_SUSFS_INLINE_HOOK
 int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *__unused_flags);
 int ksu_handle_stat(int *dfd, struct filename **filename, int *flags);
 #else
 int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *__unused_flags);
 int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
 int ksu_handle_post_execve(int *fd, const char *filename, void *argv, void *envp, int *flags, int *retval);
-#endif // #ifdef CONFIG_KSU_SUSFS
+#endif // #ifdef CONFIG_KSU_SUSFS_INLINE_HOOK
 
 #ifdef CONFIG_KSU_TRACEPOINT_HOOK
 #include <asm/current.h>
@@ -40,7 +40,7 @@ long ksu_handle_execveat_sucompat_internal(const char __user **filename_user, in
 #define ksu_set_current_proc_unprivillege() ksu_clear_task_tracepoint_flag_if_needed(current)
 #define ksu_clear_current_proc_unprivillege() ksu_set_task_tracepoint_flag(current)
 
-#elif defined(CONFIG_KSU_SUSFS) // susfs
+#elif defined(CONFIG_KSU_SUSFS_INLINE_HOOK) // susfs inline hook
 #include <linux/susfs_def.h>
 
 // sync with manual hook
@@ -49,7 +49,7 @@ long ksu_handle_execveat_sucompat_internal(const char __user **filename_user, in
 #define ksu_is_current_proc_unprivillege susfs_is_current_proc_no_su
 #define ksu_set_current_proc_unprivillege susfs_set_current_proc_no_su
 #define ksu_clear_current_proc_unprivillege susfs_clear_current_proc_no_su
-#else // manual hook
+#else // manual hook (and MANUAL_HOOK+SUSFS features)
 
 // we have a huge number spare TIFs can use
 // https://elixir.bootlin.com/linux/v7.2.2/source/arch/arm64/include/asm/thread_info.h#L90
