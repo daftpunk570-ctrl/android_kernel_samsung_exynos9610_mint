@@ -114,7 +114,10 @@ static inline void __init ksu_hook_init(void)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 8, 0)
     ksu_lsm_hook_built_in_init();
 #endif
-#elif defined(CONFIG_KSU_SUSFS)
+#ifdef CONFIG_KSU_SUSFS
+    susfs_init();
+#endif
+#elif defined(CONFIG_KSU_SUSFS_INLINE_HOOK)
 #if LINUX_VERSION_CODE < KERNEL_VERSION(6, 8, 0)
     ksu_lsm_hook_built_in_init();
 #endif
