@@ -101,16 +101,23 @@ config KSU_MANUAL_HOOK
 	  with a manually-patched function.
 	  Support for kernel 3.4+
 
-config KSU_SUSFS
+config KSU_SUSFS_INLINE_HOOK
 	bool "SUSFS Inline Hook"
 	depends on THREAD_INFO_IN_TASK && 64BIT
+	select KSU_SUSFS
 	help
-	  Patch and Enable SUSFS to kernel with KernelSU.
-	  SuSFS Officially support kernel 5.10+
-	  This KSU driver support it for 4.3+ in KSU side, 
-	  But the kernel side susfs compatibility MUST completed by yourself.
+	  Use SuSFS inline hook method (SUSFS-patched kernel hooks).
 
 endchoice
+
+config KSU_SUSFS
+	bool "Enable SuSFS support"
+	depends on KSU
+	default n
+	help
+	  Enable SuSFS features/commands integration in KernelSU driver.
+	  Requires compatible susfs implementation in the kernel.
+	  Can be combined with Manual Hook on susfs-patched kernels.
 
 menu "KernelSU - Manual Hook Auto hook"
     depends on KSU_MANUAL_HOOK
