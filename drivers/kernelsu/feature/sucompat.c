@@ -19,12 +19,14 @@
 #include <linux/sched.h>
 #endif
 
-#ifdef CONFIG_KSU_SUSFS
+#ifdef CONFIG_KSU_SUSFS_INLINE_HOOK
 #include <linux/susfs_def.h>
 #include <linux/namei.h>
 #include "selinux/selinux.h"
 #include "objsec.h"
-#endif // #ifdef CONFIG_KSU_SUSFS
+#elif defined(CONFIG_KSU_SUSFS)
+#include <linux/susfs_def.h>
+#endif // SUSFS
 
 #include "arch.h"
 #include "policy/allowlist.h"
@@ -506,12 +508,6 @@ int ksu_handle_post_execveat(int *fd, struct filename **filename_ptr, void *argv
 #ifdef CONFIG_KSU_SUSFS
 int ksu_handle_execveat_sucompat(int *fd, struct filename **filename_ptr, void *argv, void *envp, int *flags)
 {
-    // workaround susfs codes as below
-    //	if (static_branch_unlikely(&susfs_set_sdcard_android_data_decrypted_key_false))
-    //		ksu_handle_execveat(&fd, &filename, &argv, &envp, &flags);
-    //	else
-    //		ksu_handle_execveat_sucompat(&fd, &filename, &argv, &envp, &flags);
-
     return ksu_handle_execveat(fd, filename_ptr, argv, envp, flags);
 }
 
@@ -523,7 +519,7 @@ int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr, v
 #endif
 #endif
 
-#ifdef CONFIG_KSU_SUSFS
+#ifdef CONFIG_KSU_SUSFS_INLINE_HOOK
 int ksu_handle_faccessat(int *dfd, struct filename **filename, int *mode, int *__unused_flags)
 {
     const struct cred *old_cred;
@@ -597,7 +593,7 @@ int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode,
 }
 #endif
 
-#ifdef CONFIG_KSU_SUSFS
+#ifdef CONFIG_KSU_SUSFS_INLINE_HOOK
 int ksu_handle_stat(int *dfd, struct filename **filename, int *flags)
 {
     const struct cred *old_cred;
