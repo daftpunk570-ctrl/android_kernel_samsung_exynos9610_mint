@@ -12,9 +12,9 @@
 #include <linux/fs.h>
 
 #include <linux/proc_fs.h>
-#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
+#ifdef CONFIG_KSU_SUSFS
 #include <linux/susfs_def.h>
-#endif
+#endif // #ifdef CONFIG_KSU_SUSFS
 
 #include "../mount.h"
 #include "internal.h"
@@ -24,23 +24,16 @@
 extern int susfs_get_non_sus_mnt_id_from_mnt(struct mount *orig_mnt);
 #endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-extern int susfs_open_redirect_spoof_seq_show(struct inode *inode, int *out_mnt_id, unsigned long *out_ino);
-#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+extern bool susfs_is_inode_sus_kstat(struct inode *inode, bool *out_is_fuse);
+extern void susfs_sus_kstat_spoof_proc_fd_seq_show(int *out_target_mnt_id, unsigned long *out_target_ino, dev_t target_dev);
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
 static int seq_show(struct seq_file *m, void *v)
 {
 	struct files_struct *files = NULL;
 	int f_flags = 0, ret = -ENOENT;
 	struct file *file = NULL;
 	struct task_struct *task;
-#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	struct mount *mnt = NULL;
-#endif
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-	int mnt_id = 0;
-	unsigned long ino = 0;
-#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
 
 	task = get_proc_task(m->private);
 	if (!task)
@@ -71,66 +64,69 @@ static int seq_show(struct seq_file *m, void *v)
 	if (ret)
 		return ret;
 
+#ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+	if (susfs_is_current_app_uid()) {
+		struct inode *inode = file_inode(file);
+		bool is_fuse = false;
+		if (susfs_is_inode_sus_kstat(inode, &is_fuse)) {
+			int mnt_id = real_mount(file->f_path.mnt)->mnt_id;
+			unsigned long ino = inode->i_ino;
+			susfs_sus_kstat_spoof_proc_fd_seq_show(&mnt_id, &ino, inode->i_sb->s_dev);
+			seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\nino:\t%lu\n",
+					(long long)file->f_pos, f_flags,
+					mnt_id,
+					ino);
+			goto bypass_orig_flow;
+		}
+	}
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_KSTAT
+
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-	mnt = real_mount(file->f_path.mnt);
-	if (likely(susfs_is_current_proc_umounted()) &&
-				mnt->mnt_id >= DEFAULT_KSU_MNT_ID)
-	{
-		struct path path;
-		char *pathname = kmalloc(PAGE_SIZE, GFP_KERNEL);
-		char *dpath;
+	if (likely(susfs_is_current_proc_umounted())) {
+		struct mount *mnt = real_mount(file->f_path.mnt);
+		if (mnt->mnt_id >= DEFAULT_KSU_MNT_ID) {
+			struct path path;
+			char *pathname = kmalloc(PAGE_SIZE, GFP_KERNEL);
+			char *dpath;
 
-		if (!pathname) {
-			goto orig_flow;
-		}
-		dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
-		if (!dpath) {
-			goto out_kfree;
-		}
-		if (kern_path(dpath, 0, &path)) {
-			goto out_kfree;
-		}
-		if (!path.dentry->d_inode) {
-			goto out_path_put;
-		}
-		seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\nino:\t%lu\n",
-				(long long)file->f_pos, f_flags,
-				susfs_get_non_sus_mnt_id_from_mnt(mnt),
-				path.dentry->d_inode->i_ino);
-		path_put(&path);
-		kfree(pathname);
-		goto bypass_orig_flow;
+			if (!pathname) {
+				goto orig_flow;
+			}
+			dpath = d_path(&file->f_path, pathname, PAGE_SIZE);
+			if (!dpath) {
+				goto out_kfree;
+			}
+			if (kern_path(dpath, 0, &path)) {
+				goto out_kfree;
+			}
+			if (!d_backing_inode(path.dentry)) {
+				goto out_path_put;
+			}
+
+			seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\nino:\t%lu\n",
+					(long long)file->f_pos, f_flags,
+					susfs_get_non_sus_mnt_id_from_mnt(mnt),
+					d_backing_inode(path.dentry)->i_ino);
+			path_put(&path);
+			kfree(pathname);
+			goto bypass_orig_flow;
 out_path_put:
-		path_put(&path);
+			path_put(&path);
 out_kfree:
-		kfree(pathname);
-	}
-#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
-#ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-	if (SUSFS_IS_INODE_OPEN_REDIRECT(file_inode(file))) {
-		if (susfs_open_redirect_spoof_seq_show(file_inode(file), &mnt_id, &ino))
+			kfree(pathname);
 			goto orig_flow;
-		seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\nino:\t%lu\n",
-				(long long)file->f_pos, f_flags,
-				mnt_id,
-				ino);
-		goto bypass_orig_flow;
+		}
 	}
-#endif // #ifdef CONFIG_KSU_SUSFS_OPEN_REDIRECT
-
-#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)
 orig_flow:
-	seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\nino:\t%lu\n",
-			(long long)file->f_pos, f_flags,
-			real_mount(file->f_path.mnt)->mnt_id,
-			file_inode(file)->i_ino);
-bypass_orig_flow:
-#else
+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+
 	seq_printf(m, "pos:\t%lli\nflags:\t0%o\nmnt_id:\t%i\n",
 		   (long long)file->f_pos, f_flags,
 		   real_mount(file->f_path.mnt)->mnt_id);
-#endif
 
+#if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_SUS_KSTAT)
+bypass_orig_flow:
+#endif // #if defined(CONFIG_KSU_SUSFS_SUS_MOUNT) || defined(CONFIG_KSU_SUSFS_SUS_KSTAT)
 	show_fd_locks(m, file, files);
 	if (seq_has_overflowed(m))
 		goto out;
@@ -182,23 +178,18 @@ static int tid_fd_revalidate(struct dentry *dentry, unsigned int flags)
 				rcu_read_unlock();
 				put_files_struct(files);
 
-				task_dump_owner(task, 0, &inode->i_uid, &inode->i_gid);
-
-				if (S_ISLNK(inode->i_mode)) {
-					unsigned i_mode = S_IFLNK;
-					if (f_mode & FMODE_READ)
-						i_mode |= S_IRUSR | S_IXUSR;
-					if (f_mode & FMODE_WRITE)
-						i_mode |= S_IWUSR | S_IXUSR;
-					inode->i_mode = i_mode;
+				if (task_dumpable(task)) {
+					rcu_read_lock();
+					file->f_mode = f_mode | FMODE_LSEEK | FMODE_PREAD | FMODE_PWRITE;
+					rcu_read_unlock();
+					security_task_to_inode(task, inode);
+					put_task_struct(task);
+					return 1;
 				}
-
-				security_task_to_inode(task, inode);
-				put_task_struct(task);
-				return 1;
+			} else {
+				rcu_read_unlock();
+				put_files_struct(files);
 			}
-			rcu_read_unlock();
-			put_files_struct(files);
 		}
 		put_task_struct(task);
 	}
@@ -240,34 +231,40 @@ static int proc_fd_link(struct dentry *dentry, struct path *path)
 	return ret;
 }
 
-static int
-proc_fd_instantiate(struct inode *dir, struct dentry *dentry,
-		    struct task_struct *task, const void *ptr)
+struct fd_data {
+	fmode_t mode;
+	unsigned fd;
+};
+
+static struct dentry *proc_fd_instantiate(struct dentry *dentry,
+	struct task_struct *task, const void *ptr)
 {
-	unsigned fd = (unsigned long)ptr;
+	const struct fd_data *data = ptr;
 	struct proc_inode *ei;
 	struct inode *inode;
 
-	inode = proc_pid_make_inode(dir->i_sb, task, S_IFLNK);
+	inode = proc_pid_make_inode(dentry->d_sb, task, S_IFLNK);
 	if (!inode)
-		goto out;
+		return ERR_PTR(-ENOENT);
 
 	ei = PROC_I(inode);
-	ei->fd = fd;
+	ei->fd = data->fd;
 
 	inode->i_op = &proc_pid_link_inode_operations;
 	inode->i_size = 64;
 
 	ei->op.proc_get_link = proc_fd_link;
 
+	if (data->mode)
+		inode->i_mode |= data->mode;
+
 	d_set_d_op(dentry, &tid_fd_dentry_operations);
 	d_add(dentry, inode);
-
 	/* Close the race of the process dying before we return the dentry */
 	if (tid_fd_revalidate(dentry, 0))
-		return 0;
- out:
-	return -ENOENT;
+		return NULL;
+
+	return ERR_PTR(-ENOENT);
 }
 
 static struct dentry *proc_lookupfd_common(struct inode *dir,
@@ -275,19 +272,21 @@ static struct dentry *proc_lookupfd_common(struct inode *dir,
 					   instantiate_t instantiate)
 {
 	struct task_struct *task = get_proc_task(dir);
-	int result = -ENOENT;
-	unsigned fd = name_to_int(&dentry->d_name);
+	struct fd_data data = {.fd = name_to_int(&dentry->d_name)};
+	struct dentry *result = ERR_PTR(-ENOENT);
 
 	if (!task)
 		goto out_no_task;
-	if (fd == ~0U)
+	if (data.fd == ~0U)
+		goto out;
+	if (!tid_fd_mode(task, data.fd, &data.mode))
 		goto out;
 
-	result = instantiate(dir, dentry, task, (void *)(unsigned long)fd);
+	result = instantiate(dentry, task, &data);
 out:
 	put_task_struct(task);
 out_no_task:
-	return ERR_PTR(result);
+	return result;
 }
 
 static int proc_readfd_common(struct file *file, struct dir_context *ctx,
@@ -310,17 +309,22 @@ static int proc_readfd_common(struct file *file, struct dir_context *ctx,
 	for (fd = ctx->pos - 2;
 	     fd < files_fdtable(files)->max_fds;
 	     fd++, ctx->pos++) {
-		char name[PROC_NUMBUF];
-		int len;
+		struct file *f;
+		struct fd_data data;
+		char name[10 + 1];
+		unsigned int len;
 
-		if (!fcheck_files(files, fd))
+		f = fcheck_files(files, fd);
+		if (!f)
 			continue;
+		data.mode = f->f_mode;
 		rcu_read_unlock();
 
+		data.fd = fd;
 		len = snprintf(name, sizeof(name), "%u", fd);
+
 		if (!proc_fill_cache(file, ctx,
-				     name, len, instantiate, p,
-				     (void *)(unsigned long)fd))
+				     name, len, instantiate, p, &data))
 			goto out_fd_loop;
 		cond_resched();
 		rcu_read_lock();
@@ -337,12 +341,6 @@ static int proc_readfd(struct file *file, struct dir_context *ctx)
 {
 	return proc_readfd_common(file, ctx, proc_fd_instantiate);
 }
-
-const struct file_operations proc_fd_operations = {
-	.read		= generic_read_dir,
-	.iterate_shared	= proc_readfd,
-	.llseek		= generic_file_llseek,
-};
 
 static struct dentry *proc_lookupfd(struct inode *dir, struct dentry *dentry,
 				    unsigned int flags)
@@ -378,52 +376,8 @@ const struct inode_operations proc_fd_inode_operations = {
 	.setattr	= proc_setattr,
 };
 
-static int
-proc_fdinfo_instantiate(struct inode *dir, struct dentry *dentry,
-			struct task_struct *task, const void *ptr)
-{
-	unsigned fd = (unsigned long)ptr;
-	struct proc_inode *ei;
-	struct inode *inode;
-
-	inode = proc_pid_make_inode(dir->i_sb, task, S_IFREG | S_IRUSR);
-	if (!inode)
-		goto out;
-
-	ei = PROC_I(inode);
-	ei->fd = fd;
-
-	inode->i_fop = &proc_fdinfo_file_operations;
-
-	d_set_d_op(dentry, &tid_fd_dentry_operations);
-	d_add(dentry, inode);
-
-	/* Close the race of the process dying before we return the dentry */
-	if (tid_fd_revalidate(dentry, 0))
-		return 0;
- out:
-	return -ENOENT;
-}
-
-static struct dentry *
-proc_lookupfdinfo(struct inode *dir, struct dentry *dentry, unsigned int flags)
-{
-	return proc_lookupfd_common(dir, dentry, proc_fdinfo_instantiate);
-}
-
-static int proc_readfdinfo(struct file *file, struct dir_context *ctx)
-{
-	return proc_readfd_common(file, ctx,
-				  proc_fdinfo_instantiate);
-}
-
-const struct inode_operations proc_fdinfo_inode_operations = {
-	.lookup		= proc_lookupfdinfo,
-	.setattr	= proc_setattr,
-};
-
-const struct file_operations proc_fdinfo_operations = {
+const struct file_operations proc_fd_operations = {
 	.read		= generic_read_dir,
-	.iterate_shared	= proc_readfdinfo,
+	.iterate_shared	= proc_readfd,
 	.llseek		= generic_file_llseek,
 };
