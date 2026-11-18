@@ -43,14 +43,7 @@ DEVICE_DB_DIR="$TOP/Documentation/device-db"
 BUILD_CONFIG_DIR="$TOP/arch/arm64/configs"
 SUB_CONFIG_DIR="$TOP/kernel/configs"
 
-# KernelSU Next is pinned so local and CI builds are reproducible.
-KSU_NEXT_DIR="$TOP/KernelSU"
-KSU_NEXT_REPOSITORY="https://github.com/sidex15/KernelSU-Next.git"
-KSU_NEXT_VERSION="v3.2.0-legacy-susfs-v2"
-KSU_NEXT_COMMIT="f110cddc07e27b21ad77c6c31261660efb25dce4"
-SUSFS_VERSION="v2.2.0"
-SUSFS_PORT_PATCH="$TOP/kernel/patches/susfs-v2.2.0-exynos9610.patch"
-KSU_NEXT_COMPAT_PATCH="$TOP/kernel/patches/ksunext-v3.2.0-legacy-susfs-v2-exynos9610.patch"
+# BakaSU + SUSFS 2.3.0 are integrated in-tree (Mint3 base).
 
 # Toolchain options
 BUILD_PREF_COMPILER="clang"
@@ -94,63 +87,6 @@ merge_config() {
 	else
 		cat "$SUB_CONFIG_DIR/mint_$1.config" >> "$BUILD_CONFIG_DIR/$BUILD_DEVICE_TMP_CONFIG"
 	fi
-}
-
-VERIFY_KERNELSU_NEXT() {
-    local actual_commit actual_remote
-
-    $BUILD_KERNEL_KSU || return 0
-
-    script_echo " "
-    script_echo "I: Preparing KernelSU Next $KSU_NEXT_VERSION..."
-
-    git submodule sync -- KernelSU
-    if ! git submodule update --init --recursive KernelSU; then
-        script_echo "E: Unable to initialize the KernelSU Next submodule."
-        script_echo "   Expected repository: $KSU_NEXT_REPOSITORY"
-        exit_script
-    fi
-
-    actual_commit="$(git -C "$KSU_NEXT_DIR" rev-parse HEAD)"
-    actual_remote="$(git -C "$KSU_NEXT_DIR" remote get-url origin)"
-
-    if [[ "$actual_commit" != "$KSU_NEXT_COMMIT" ]]; then
-        script_echo "E: Unexpected KernelSU Next revision: $actual_commit"
-        script_echo "   Expected $KSU_NEXT_VERSION ($KSU_NEXT_COMMIT)."
-        exit_script
-    fi
-
-    if [[ "$actual_remote" != "$KSU_NEXT_REPOSITORY" ]]; then
-        script_echo "E: Unexpected KernelSU Next repository: $actual_remote"
-        script_echo "   Expected $KSU_NEXT_REPOSITORY."
-        exit_script
-    fi
-
-    if git -C "$TOP" apply --reverse --check "$SUSFS_PORT_PATCH" >/dev/null 2>&1; then
-        script_echo "I: SUSFS $SUSFS_VERSION Exynos9610 port is already applied."
-    elif git -C "$TOP" apply --check "$SUSFS_PORT_PATCH"; then
-        git -C "$TOP" apply "$SUSFS_PORT_PATCH"
-        script_echo "I: Applied SUSFS $SUSFS_VERSION Exynos9610 port."
-    else
-        script_echo "E: SUSFS $SUSFS_VERSION Exynos9610 port does not apply cleanly."
-        exit_script
-    fi
-
-    if [[ ! -f "$TOP/include/linux/susfs.h" ]] ||
-       ! grep -q "#define SUSFS_VERSION \"$SUSFS_VERSION\"" "$TOP/include/linux/susfs.h"; then
-        script_echo "E: Expected SUSFS $SUSFS_VERSION integration was not found."
-        exit_script
-    fi
-
-    if git -C "$KSU_NEXT_DIR" apply --ignore-space-change --reverse --check "$KSU_NEXT_COMPAT_PATCH" >/dev/null 2>&1; then
-        script_echo "I: KernelSU Next Exynos9610 compatibility patch is already applied."
-    elif git -C "$KSU_NEXT_DIR" apply --ignore-space-change --check "$KSU_NEXT_COMPAT_PATCH"; then
-        git -C "$KSU_NEXT_DIR" apply --ignore-space-change "$KSU_NEXT_COMPAT_PATCH"
-        script_echo "I: Applied KernelSU Next Exynos9610 compatibility patch."
-    else
-        script_echo "E: KernelSU Next compatibility patch does not apply cleanly."
-        exit_script
-    fi
 }
 
 # Script functions
@@ -202,11 +138,8 @@ SET_ANDROIDVERSION() {
     echo "CONFIG_MINT_PLATFORM_VERSION=$BUILD_ANDROID_PLATFORM" >> "$BUILD_CONFIG_DIR/$BUILD_DEVICE_TMP_CONFIG"
 }
 SET_LOCALVERSION() {
-    case "$BUILD_KERNEL_BRANCH" in
-    mainline) export LOCALVERSION=" - Mint $KERNEL_BUILD_VERSION" ;;
-    user)     export LOCALVERSION=" - Mint-user $BUILD_DATE" ;;
-    *)        export LOCALVERSION=" - Mint Beta $GITHUB_RUN_NUMBER"
-    esac
+    # Let CONFIG_LOCALVERSION from merged configs take effect (e.g. -bitcockiii).
+    true
 }
 SET_ZIPNAME() {
     local MINT_TYPE MINT_SELINUX ONEUI_VERSION ROOT_SOLUTION
@@ -223,7 +156,7 @@ SET_ZIPNAME() {
         MINT_TYPE="CI"
     fi
 
-    $BUILD_KERNEL_KSU && ROOT_SOLUTION="-KSUNext-${KSU_NEXT_VERSION#v}-SUSFS-${SUSFS_VERSION#v}"
+    $BUILD_KERNEL_KSU && ROOT_SOLUTION="-KSU"
     $BUILD_KERNEL_PERMISSIVE && MINT_SELINUX="Permissive"
 
     case "$BUILD_VARIANT" in
@@ -252,16 +185,16 @@ BUILD_KERNEL() {
 
     case "$BUILD_PREF_COMPILER_VERSION" in
     proton)
-        make -C "$TOP" CC="$BUILD_PREF_COMPILER" HOSTCC="clang -fuse-ld=/usr/bin/ld" HOSTCXX="clang++ -fuse-ld=/usr/bin/ld" AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip "$BUILD_DEVICE_TMP_CONFIG" LOCALVERSION="$LOCALVERSION" 2>&1 | sed 's/^/     /'
-        make -C "$TOP" CC="$BUILD_PREF_COMPILER" HOSTCC="clang -fuse-ld=/usr/bin/ld" HOSTCXX="clang++ -fuse-ld=/usr/bin/ld" AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip -j$JOBS LOCALVERSION="$LOCALVERSION" 2>&1 | sed 's/^/     /'
+        make -C "$TOP" CC="$BUILD_PREF_COMPILER" HOSTCC="clang -fuse-ld=/usr/bin/ld" HOSTCXX="clang++ -fuse-ld=/usr/bin/ld" AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip "$BUILD_DEVICE_TMP_CONFIG" 2>&1 | sed 's/^/     /'
+        make -C "$TOP" CC="$BUILD_PREF_COMPILER" HOSTCC="clang -fuse-ld=/usr/bin/ld" HOSTCXX="clang++ -fuse-ld=/usr/bin/ld" AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip -j$JOBS 2>&1 | sed 's/^/     /'
         ;;
     clang)
-        make -C "$TOP" CC="$BUILD_PREF_COMPILER" LLVM=1 "$BUILD_DEVICE_TMP_CONFIG" LOCALVERSION="$LOCALVERSION" 2>&1 | sed 's/^/     /'
-        make -C "$TOP" CC="$BUILD_PREF_COMPILER" LLVM=1 -j$JOBS LOCALVERSION="$LOCALVERSION" 2>&1 | sed 's/^/     /'
+        make -C "$TOP" CC="$BUILD_PREF_COMPILER" LLVM=1 "$BUILD_DEVICE_TMP_CONFIG" 2>&1 | sed 's/^/     /'
+        make -C "$TOP" CC="$BUILD_PREF_COMPILER" LLVM=1 -j$JOBS 2>&1 | sed 's/^/     /'
         ;;
     *)
-        make -C "$TOP" CC="$BUILD_PREF_COMPILER" "$BUILD_DEVICE_TMP_CONFIG" LOCALVERSION="$LOCALVERSION" 2>&1 | sed 's/^/     /'
-        make -C "$TOP" CC="$BUILD_PREF_COMPILER" -j$JOBS LOCALVERSION="$LOCALVERSION" 2>&1 | sed 's/^/     /'
+        make -C "$TOP" CC="$BUILD_PREF_COMPILER" "$BUILD_DEVICE_TMP_CONFIG" 2>&1 | sed 's/^/     /'
+        make -C "$TOP" CC="$BUILD_PREF_COMPILER" -j$JOBS 2>&1 | sed 's/^/     /'
         ;;
     esac
 
@@ -364,9 +297,9 @@ BUILD_PACKAGE() {
         echo "ro.mint.build.toolchain.commit=$TOOLCHAIN_COMMIT"
         echo "ro.mint.build.branch=$BUILD_KERNEL_BRANCH"
         echo "ro.mint.build.ksu=$BUILD_KERNEL_KSU"
-        $BUILD_KERNEL_KSU && echo "ro.mint.build.ksu.version=$KSU_NEXT_VERSION"
-        $BUILD_KERNEL_KSU && echo "ro.mint.build.ksu.commit=$KSU_NEXT_COMMIT"
-        $BUILD_KERNEL_KSU && echo "ro.mint.build.susfs.version=$SUSFS_VERSION"
+        $BUILD_KERNEL_KSU && echo "ro.mint.build.ksu.version=BakaSU"
+        $BUILD_KERNEL_KSU && echo "ro.mint.build.ksu.commit=in-tree"
+        $BUILD_KERNEL_KSU && echo "ro.mint.build.susfs.version=v2.3.0"
         echo "ro.mint.droid.device=${BUILD_DEVICE_NAME^}"
         echo "ro.mint.droid.variant=$MINT_VARIANT"
 
@@ -401,7 +334,7 @@ show_usage() {
 	script_echo "-a, --android <version>   Set Android version to build the kernel for. (Default: 11)"
 	script_echo "-v, --variant <variant>   Set build variant to build the kernel for. Required."
 	script_echo " "
-	script_echo "-k, --kernelsu            Pre-root with KernelSU Next $KSU_NEXT_VERSION."
+	script_echo "-k, --kernelsu            Pre-root with in-tree BakaSU/SUSFS 2.3.0."
 	script_echo "                          Not available for 'recovery' variant."
 	script_echo "-n, --no-clean            Do not clean up before build."
 	script_echo "-p, --permissive          Build kernel with SELinux fully permissive. NOT RECOMMENDED!"
@@ -546,10 +479,6 @@ else
 	make CC="$BUILD_PREF_COMPILER" CONFIG_KSU_MANUAL_HOOK=y clean 2>&1 | sed 's/^/     /'
 	make CC="$BUILD_PREF_COMPILER" CONFIG_KSU_MANUAL_HOOK=y mrproper 2>&1 | sed 's/^/     /'
 fi
-
-# Initialize KernelSU Next only after clean/mrproper, so the clean targets do
-# not enter legacy Kbuild before the following make imports the merged config.
-VERIFY_KERNELSU_NEXT
 
 # Merge subconfigs
 merge_config "partial-deknox-$BUILD_ANDROID_PLATFORM"

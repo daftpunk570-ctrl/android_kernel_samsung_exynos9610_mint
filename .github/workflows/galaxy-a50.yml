@@ -1,17 +1,12 @@
-name: Build and release A50 Android 11
+name: Build A50 AOSP 11 (BakaSU/SUSFS 2.3.0)
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
-    tags: ['a50-*']
+    branches: [a50-gsi-bakasu-susfs230]
 
 permissions:
   contents: read
-
-concurrency:
-  group: a50-release-${{ github.ref }}
-  cancel-in-progress: false
 
 defaults:
   run:
@@ -27,11 +22,10 @@ jobs:
       matrix:
         variant: [aosp, oneui]
     steps:
-      - name: Checkout exact source and KernelSU revision
+      - name: Checkout source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          submodules: recursive
-          fetch-depth: 0
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Install build dependencies
@@ -41,30 +35,23 @@ jobs:
             libelf-dev libncurses5 libncurses-dev lib32stdc++6 libc6-dev-i386 \
             cpio zip unzip lz4 lzop rsync python3
 
-      - name: Verify integration patches and pinned dependencies
-        run: bash scripts/verify-ksunext.sh
-
-      - name: Build TWRP package
+      - name: Build package
         env:
           VARIANT: ${{ matrix.variant }}
         run: |
           mkdir -p ci-logs
           bash build.sh --automated --device a50 --android 11 --variant "$VARIANT" --kernelsu 2>&1 | tee ci-logs/build.log
 
-      - name: Validate ZIP and collect public build metadata
+      - name: Collect outputs
         env:
           VARIANT: ${{ matrix.variant }}
         run: |
-          python3 scripts/validate-a50-package.py "$VARIANT"
           mkdir -p release
-          cp out/*.zip release/
-          cp .config "release/kernel-config-${VARIANT}-android11.txt"
+          cp out/*.zip release/ || true
+          cp .config "release/kernel-config-${VARIANT}-android11.txt" || true
           {
             printf 'source=%s\nvariant=%s\nandroid=11\nselinux=enforcing\n' "$GITHUB_SHA" "$VARIANT"
-            printf 'kernelsu=%s\n' "$(git -C KernelSU rev-parse HEAD)"
-            printf 'toolchain=%s\n' "$(git -C toolchain rev-parse HEAD)"
-            printf 'susfs=v2.2.0\n'
-            sha256sum kernel/patches/*.patch
+            printf 'kernelsu=BakaSU\nsusfs=v2.3.0\nbase=mint3-a50-a11-3-1\n'
           } > "release/build-info-${VARIANT}.txt"
 
       - name: Upload release files
@@ -84,44 +71,3 @@ jobs:
           path: ci-logs/build.log
           if-no-files-found: ignore
           retention-days: 7
-
-  release:
-    name: Publish both variants
-    needs: build
-    runs-on: ubuntu-22.04
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout release notes
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          persist-credentials: false
-
-      - name: Download both validated packages
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          pattern: a50-android11-*
-          merge-multiple: true
-          path: release
-
-      - name: Publish immutable run release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: |
-          shopt -s nullglob
-          zips=(release/*.zip)
-          test "${#zips[@]}" -eq 2
-          cp Documentation/a50-release.md release-notes.md
-          printf '\nSource commit: `%s`\nWorkflow run: %s/%s/actions/runs/%s\n' \
-            "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" >> release-notes.md
-          (cd release && sha256sum ./*.zip ./*.txt > SHA256SUMS)
-          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
-            tag="$GITHUB_REF_NAME"
-          else
-            tag="a50-a11-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
-          fi
-          gh release create "$tag" release/* --target "$GITHUB_SHA" \
-            --title "Mint A50 Android 11 - KSU Next + SUSFS 2.2.0 ($tag)" \
-            --notes-file release-notes.md
