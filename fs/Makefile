@@ -142,6 +142,5 @@ obj-$(CONFIG_EFIVAR_FS)		+= efivarfs/
 
 CFLAGS_binfmt_elf.o		+= -Wframe-larger-than=8192
 CFLAGS_compat_binfmt_elf.o	+= -Wframe-larger-than=8192
-obj-$(CONFIG_KSU_SUSFS) += susfs.o
 obj-$(CONFIG_MOUNTZERO) += mountzero.o
 obj-$(CONFIG_EROFS_FS)		+= erofs/
