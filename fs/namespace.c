@@ -1430,12 +1430,16 @@ vfs_kern_mount(struct file_system_type *type, int flags, const char *name, void 
 
 #ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
 	// - We will just stop checking for ksu process if /sdcard/Android is accessible,
-	//   for the sake of performance.
+	//   for the sake of performance. But always treat mounts explicitly named "KSU"
+	//   (metamodule/systemless mounts) as SUS/KSU mounts so SUSFS can hide them.
 	if (static_branch_unlikely(&susfs_is_sdcard_android_data_not_decrypted)) {
 		if (susfs_is_current_ksu_domain()) {
 			mnt = susfs_alloc_non_unshare_ksu_vfsmnt(name ?: "none");
 			goto bypass_orig_flow;
 		}
+	} else if (name && !strcmp(name, "KSU") && susfs_is_current_ksu_domain()) {
+		mnt = susfs_alloc_non_unshare_ksu_vfsmnt(name);
+		goto bypass_orig_flow;
 	}
 #endif
 	mnt = alloc_vfsmnt(name);
@@ -4455,8 +4459,8 @@ const struct proc_ns_operations mntns_operations = {
 	.owner		= mntns_owner,
 };
 
-#ifdef CONFIG_KSU_SUSFS
-/* - To retrieve the non sus mnt_id from mount */
+#ifdef CONFIG_KSU_SUSFS_SUS_MOUNT
+/* - To retrieve the non sus mount id from mount */
 int susfs_get_non_sus_mnt_id_from_mnt(struct mount *orig_mnt) {
 	struct mount *mnt = orig_mnt;
 	int mnt_id;
