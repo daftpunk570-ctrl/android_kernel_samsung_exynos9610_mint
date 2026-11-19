@@ -179,15 +179,20 @@ static int tid_fd_revalidate(struct dentry *dentry, unsigned int flags)
 				rcu_read_unlock();
 				put_files_struct(files);
 
-				if (task_dumpable(task)) {
-					rcu_read_lock();
-					security_task_to_inode(task, inode);
-					rcu_read_unlock();
-					put_task_struct(task);
-					return 1;
+				task_dump_owner(task, 0, &inode->i_uid, &inode->i_gid);
+
+				if (S_ISLNK(inode->i_mode)) {
+					unsigned i_mode = S_IFLNK;
+					if (f_mode & FMODE_READ)
+						i_mode |= S_IRUSR | S_IXUSR;
+					if (f_mode & FMODE_WRITE)
+						i_mode |= S_IWUSR | S_IXUSR;
+					inode->i_mode = i_mode;
 				}
+
+				security_task_to_inode(task, inode);
 				put_task_struct(task);
-				return 0;
+				return 1;
 			}
 			rcu_read_unlock();
 			put_files_struct(files);
